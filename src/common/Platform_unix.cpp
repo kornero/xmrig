@@ -149,9 +149,11 @@ void Platform::setThreadPriority(int priority)
         sched_param param;
         param.sched_priority = 0;
 
+#   if defined(MAP_HUGETLB)
         if (sched_setscheduler(0, SCHED_IDLE, &param) != 0) {
             sched_setscheduler(0, SCHED_BATCH, &param);
         }
+#   endif
     }
 #   endif
 }
