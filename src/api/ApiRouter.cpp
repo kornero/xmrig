@@ -5,7 +5,8 @@
  * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
  * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
  * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2016-2018 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
+ * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -35,14 +36,13 @@
 #include "api/ApiRouter.h"
 #include "common/api/HttpReply.h"
 #include "common/api/HttpRequest.h"
+#include "common/cpu/Cpu.h"
 #include "common/crypto/keccak.h"
 #include "common/net/Job.h"
 #include "common/Platform.h"
 #include "core/Config.h"
 #include "core/Controller.h"
-#include "Cpu.h"
 #include "interfaces/IThread.h"
-#include "Mem.h"
 #include "rapidjson/document.h"
 #include "rapidjson/prettywriter.h"
 #include "rapidjson/stringbuffer.h"
@@ -67,7 +67,7 @@ ApiRouter::ApiRouter(xmrig::Controller *controller) :
     memset(m_workerId, 0, sizeof(m_workerId));
 
     setWorkerId(controller->config()->apiWorkerId());
-    genId();
+    genId(controller->config()->apiId());
 }
 
 
@@ -120,7 +120,7 @@ void ApiRouter::exec(const xmrig::HttpRequest &req, xmrig::HttpReply &reply)
 }
 
 
-void ApiRouter::tick(const NetworkState &network)
+void ApiRouter::tick(const xmrig::NetworkState &network)
 {
     m_network = network;
 }
@@ -134,7 +134,7 @@ void ApiRouter::onConfigChanged(xmrig::Config *config, xmrig::Config *previousCo
 
 void ApiRouter::finalize(xmrig::HttpReply &reply, rapidjson::Document &doc) const
 {
-    rapidjson::StringBuffer buffer(0, 4096);
+    rapidjson::StringBuffer buffer(nullptr, 4096);
     rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
     writer.SetMaxDecimalPlaces(10);
     doc.Accept(writer);
@@ -145,9 +145,14 @@ void ApiRouter::finalize(xmrig::HttpReply &reply, rapidjson::Document &doc) cons
 }
 
 
-void ApiRouter::genId()
+void ApiRouter::genId(const char *id)
 {
     memset(m_id, 0, sizeof(m_id));
+
+    if (id && strlen(id) > 0) {
+        strncpy(m_id, id, sizeof(m_id) - 1);
+        return;
+    }
 
     uv_interface_address_t *interfaces;
     int count = 0;
@@ -160,14 +165,16 @@ void ApiRouter::genId()
         if (!interfaces[i].is_internal && interfaces[i].address.address4.sin_family == AF_INET) {
             uint8_t hash[200];
             const size_t addrSize = sizeof(interfaces[i].phys_addr);
-            const size_t inSize   = strlen(APP_KIND) + addrSize;
+            const size_t inSize   = strlen(APP_KIND) + addrSize + sizeof(uint16_t);
+            const uint16_t port   = static_cast<uint16_t>(m_controller->config()->apiPort());
 
             uint8_t *input = new uint8_t[inSize]();
-            memcpy(input, interfaces[i].phys_addr, addrSize);
-            memcpy(input + addrSize, APP_KIND, strlen(APP_KIND));
+            memcpy(input, &port, sizeof(uint16_t));
+            memcpy(input + sizeof(uint16_t), interfaces[i].phys_addr, addrSize);
+            memcpy(input + sizeof(uint16_t) + addrSize, APP_KIND, strlen(APP_KIND));
 
             xmrig::keccak(input, inSize, hash);
-            Job::toHex(hash, 8, m_id);
+            xmrig::Job::toHex(hash, 8, m_id);
 
             delete [] input;
             break;
@@ -232,13 +239,14 @@ void ApiRouter::getIdentify(rapidjson::Document &doc) const
 
 void ApiRouter::getMiner(rapidjson::Document &doc) const
 {
+    using namespace xmrig;
     auto &allocator = doc.GetAllocator();
 
     rapidjson::Value cpu(rapidjson::kObjectType);
-    cpu.AddMember("brand",   rapidjson::StringRef(Cpu::brand()), allocator);
-    cpu.AddMember("aes",     Cpu::hasAES(), allocator);
-    cpu.AddMember("x64",     Cpu::isX64(), allocator);
-    cpu.AddMember("sockets", Cpu::sockets(), allocator);
+    cpu.AddMember("brand",   rapidjson::StringRef(Cpu::info()->brand()), allocator);
+    cpu.AddMember("aes",     Cpu::info()->hasAES(), allocator);
+    cpu.AddMember("x64",     Cpu::info()->isX64(), allocator);
+    cpu.AddMember("sockets", Cpu::info()->sockets(), allocator);
 
     doc.AddMember("version",      APP_VERSION, allocator);
     doc.AddMember("kind",         APP_KIND, allocator);
@@ -285,13 +293,16 @@ void ApiRouter::getThreads(rapidjson::Document &doc) const
     const std::vector<xmrig::IThread *> &threads = m_controller->config()->threads();
     rapidjson::Value list(rapidjson::kArrayType);
 
+    size_t i = 0;
     for (const xmrig::IThread *thread : threads) {
         rapidjson::Value value = thread->toAPI(doc);
 
         rapidjson::Value hashrate(rapidjson::kArrayType);
-        hashrate.PushBack(normalize(hr->calc(thread->index(), Hashrate::ShortInterval)),  allocator);
-        hashrate.PushBack(normalize(hr->calc(thread->index(), Hashrate::MediumInterval)), allocator);
-        hashrate.PushBack(normalize(hr->calc(thread->index(), Hashrate::LargeInterval)),  allocator);
+        hashrate.PushBack(normalize(hr->calc(i, Hashrate::ShortInterval)),  allocator);
+        hashrate.PushBack(normalize(hr->calc(i, Hashrate::MediumInterval)), allocator);
+        hashrate.PushBack(normalize(hr->calc(i, Hashrate::LargeInterval)),  allocator);
+
+        i++;
 
         value.AddMember("hashrate", hashrate, allocator);
         list.PushBack(value, allocator);

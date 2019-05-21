@@ -5,7 +5,8 @@
  * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
  * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
  * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2016-2018 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
+ * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -33,42 +34,34 @@
 #include "net/strategies/DonateStrategy.h"
 
 
-const static char *kDonatePool1   = "miner.fee.xmrig.com";
-const static char *kDonatePool2   = "emergency.fee.xmrig.com";
-
-
 static inline float randomf(float min, float max) {
     return (max - min) * ((((float) rand()) / (float) RAND_MAX)) + min;
 }
 
 
-DonateStrategy::DonateStrategy(int level, const char *user, xmrig::Algo algo, IStrategyListener *listener) :
+xmrig::DonateStrategy::DonateStrategy(int level, const char *user, Algo algo, IStrategyListener *listener) :
     m_active(false),
     m_donateTime(level * 60 * 1000),
     m_idleTime((100 - level) * 60 * 1000),
     m_strategy(nullptr),
-    m_listener(listener)
+    m_listener(listener),
+    m_now(0),
+    m_stop(0)
 {
     uint8_t hash[200];
     char userId[65] = { 0 };
 
-    xmrig::keccak(reinterpret_cast<const uint8_t *>(user), strlen(user), hash);
+    keccak(reinterpret_cast<const uint8_t *>(user), strlen(user), hash);
     Job::toHex(hash, 32, userId);
 
-    if (algo == xmrig::CRYPTONIGHT) {
-        m_pools.push_back(Pool(kDonatePool1, 6666, userId, nullptr, false, true));
-        m_pools.push_back(Pool(kDonatePool1, 80,   userId, nullptr, false, true));
-        m_pools.push_back(Pool(kDonatePool2, 5555, "48edfHu7V9Z84YzzMa6fUueoELZ9ZRXq9VetWzYGzKt52XU5xvqgzYnDK9URnRoJMk1j8nLwEVsaSWJ4fhdUyZijBGUicoD", "emergency", false, false));
-    }
-    else if (algo == xmrig::CRYPTONIGHT_HEAVY) {
-        m_pools.push_back(Pool(kDonatePool1, 8888, userId, nullptr, false, true));
-    }
-    else {
-        m_pools.push_back(Pool(kDonatePool1, 5555, userId, nullptr, false, true));
-    }
+#   ifndef XMRIG_NO_TLS
+    m_pools.push_back(Pool("donate.ssl.xmrig.com", 443, userId, nullptr, false, true, true));
+#   endif
+
+    m_pools.push_back(Pool("donate.v2.xmrig.com", 3333, userId, nullptr, false, true));
 
     for (Pool &pool : m_pools) {
-        pool.adjust(algo);
+        pool.adjust(Algorithm(algo, VARIANT_AUTO));
     }
 
     if (m_pools.size() > 1) {
@@ -85,38 +78,51 @@ DonateStrategy::DonateStrategy(int level, const char *user, xmrig::Algo algo, IS
 }
 
 
-DonateStrategy::~DonateStrategy()
+xmrig::DonateStrategy::~DonateStrategy()
 {
     delete m_strategy;
 }
 
 
-int64_t DonateStrategy::submit(const JobResult &result)
+int64_t xmrig::DonateStrategy::submit(const JobResult &result)
 {
     return m_strategy->submit(result);
 }
 
 
-void DonateStrategy::connect()
+void xmrig::DonateStrategy::connect()
 {
     m_strategy->connect();
 }
 
 
-void DonateStrategy::stop()
+void xmrig::DonateStrategy::setAlgo(const xmrig::Algorithm &algo)
+{
+    m_strategy->setAlgo(algo);
+}
+
+
+void xmrig::DonateStrategy::stop()
 {
     uv_timer_stop(&m_timer);
     m_strategy->stop();
 }
 
 
-void DonateStrategy::tick(uint64_t now)
+void xmrig::DonateStrategy::tick(uint64_t now)
 {
+    m_now = now;
+
     m_strategy->tick(now);
+
+    if (m_stop && now > m_stop) {
+        m_strategy->stop();
+        m_stop = 0;
+    }
 }
 
 
-void DonateStrategy::onActive(IStrategy *strategy, Client *client)
+void xmrig::DonateStrategy::onActive(IStrategy *strategy, Client *client)
 {
     if (!isActive()) {
         uv_timer_start(&m_timer, DonateStrategy::onTimer, m_donateTime, 0);
@@ -127,32 +133,38 @@ void DonateStrategy::onActive(IStrategy *strategy, Client *client)
 }
 
 
-void DonateStrategy::onJob(IStrategy *strategy, Client *client, const Job &job)
+void xmrig::DonateStrategy::onJob(IStrategy *strategy, Client *client, const Job &job)
 {
-    m_listener->onJob(this, client, job);
+    if (isActive()) {
+        m_listener->onJob(this, client, job);
+    }
 }
 
 
-void DonateStrategy::onPause(IStrategy *strategy)
+void xmrig::DonateStrategy::onPause(IStrategy *strategy)
 {
 }
 
 
-void DonateStrategy::onResultAccepted(IStrategy *strategy, Client *client, const SubmitResult &result, const char *error)
+void xmrig::DonateStrategy::onResultAccepted(IStrategy *strategy, Client *client, const SubmitResult &result, const char *error)
 {
     m_listener->onResultAccepted(this, client, result, error);
 }
 
 
-void DonateStrategy::idle(uint64_t timeout)
+void xmrig::DonateStrategy::idle(uint64_t timeout)
 {
     uv_timer_start(&m_timer, DonateStrategy::onTimer, timeout, 0);
 }
 
 
-void DonateStrategy::suspend()
+void xmrig::DonateStrategy::suspend()
 {
-    m_strategy->stop();
+#   if defined(XMRIG_AMD_PROJECT) || defined(XMRIG_NVIDIA_PROJECT)
+    m_stop = m_now + 5000;
+#   else
+    m_stop = m_now + 500;
+#   endif
 
     m_active = false;
     m_listener->onPause(this);
@@ -161,7 +173,7 @@ void DonateStrategy::suspend()
 }
 
 
-void DonateStrategy::onTimer(uv_timer_t *handle)
+void xmrig::DonateStrategy::onTimer(uv_timer_t *handle)
 {
     auto strategy = static_cast<DonateStrategy*>(handle->data);
 

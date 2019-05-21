@@ -52,15 +52,19 @@ typedef cpuset_t cpu_set_t;
 #endif
 
 
-static inline char *createUserAgent()
+char *Platform::createUserAgent()
 {
-    const size_t max = 160;
+    constexpr const size_t max = 256;
 
-    char *buf = new char[max];
+    char *buf = new char[max]();
     int length = snprintf(buf, max, "%s/%s (Linux ", APP_NAME, APP_VERSION);
 
 #   if defined(__x86_64__)
     length += snprintf(buf + length, max - length, "x86_64) libuv/%s", uv_version_string());
+#   elif defined(__aarch64__)
+    length += snprintf(buf + length, max - length, "aarch64) libuv/%s", uv_version_string());
+#   elif defined(__arm__)
+    length += snprintf(buf + length, max - length, "arm) libuv/%s", uv_version_string());
 #   else
     length += snprintf(buf + length, max - length, "i686) libuv/%s", uv_version_string());
 #   endif
@@ -70,7 +74,9 @@ static inline char *createUserAgent()
     length += snprintf(buf + length, max - length, " CUDA/%d.%d", cudaVersion / 1000, cudaVersion % 100);
 #   endif
 
-#   ifdef __GNUC__
+#   ifdef __clang__
+    length += snprintf(buf + length, max - length, " clang/%d.%d.%d", __clang_major__, __clang_minor__, __clang_patchlevel__);
+#   elif defined(__GNUC__)
     length += snprintf(buf + length, max - length, " gcc/%d.%d.%d", __GNUC__, __GNUC_MINOR__, __GNUC_PATCHLEVEL__);
 #   endif
 
@@ -92,21 +98,20 @@ bool Platform::setThreadAffinity(uint64_t cpu_id)
 }
 
 
-void Platform::init(const char *userAgent)
+uint32_t Platform::setTimerResolution(uint32_t resolution)
 {
-    if (userAgent) {
-        m_userAgent = userAgent;
-    }
-    else {
-        m_userAgent = createUserAgent();
-    }
+    return resolution;
+}
+
+
+void Platform::restoreTimerResolution()
+{
 }
 
 
 void Platform::setProcessPriority(int priority)
 {
 }
-
 
 
 void Platform::setThreadPriority(int priority)

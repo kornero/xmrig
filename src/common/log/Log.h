@@ -5,7 +5,8 @@
  * Copyright 2014-2016 Wolf9466    <https://github.com/OhGodAPet>
  * Copyright 2016      Jay D Dee   <jayddee246@gmail.com>
  * Copyright 2017-2018 XMR-Stak    <https://github.com/fireice-uk>, <https://github.com/psychocrypt>
- * Copyright 2016-2018 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
+ * Copyright 2018-2019 SChernykh   <https://github.com/SChernykh>
+ * Copyright 2016-2019 XMRig       <https://github.com/xmrig>, <support@xmrig.com>
  *
  *   This program is free software: you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -21,8 +22,8 @@
  *   along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#ifndef __LOG_H__
-#define __LOG_H__
+#ifndef XMRIG_LOG_H
+#define XMRIG_LOG_H
 
 
 #include <assert.h>
@@ -36,16 +37,19 @@
 class Log
 {
 public:
-    static inline Log* i()                       { assert(m_self != nullptr); return m_self; }
+    static inline Log* i()                       { if (!m_self) { defaultInit(); } return m_self; }
     static inline void add(ILogBackend *backend) { i()->m_backends.push_back(backend); }
     static inline void init()                    { if (!m_self) { new Log(); } }
-    static inline void release()                 { assert(m_self != nullptr); delete m_self; }
+    static inline void release()                 { delete m_self; }
 
     void message(ILogBackend::Level level, const char* fmt, ...);
     void text(const char* fmt, ...);
 
     static const char *colorByLevel(ILogBackend::Level level, bool isColors = true);
     static const char *endl(bool isColors = true);
+    static void defaultInit();
+
+    static bool colors;
 
 private:
     inline Log() {
@@ -68,12 +72,15 @@ private:
 #define RED(x)          "\x1B[0;31m" x "\x1B[0m"
 #define GREEN_BOLD(x)   "\x1B[1;32m" x "\x1B[0m"
 #define GREEN(x)        "\x1B[0;32m" x "\x1B[0m"
+#define YELLOW(x)       "\x1B[0;33m" x "\x1B[0m"
+#define YELLOW_BOLD(x)  "\x1B[1;33m" x "\x1B[0m"
 #define MAGENTA_BOLD(x) "\x1B[1;35m" x "\x1B[0m"
 #define MAGENTA(x)      "\x1B[0;35m" x "\x1B[0m"
 #define CYAN_BOLD(x)    "\x1B[1;36m" x "\x1B[0m"
 #define CYAN(x)         "\x1B[0;36m" x "\x1B[0m"
 #define WHITE_BOLD(x)   "\x1B[1;37m" x "\x1B[0m"
 #define WHITE(x)        "\x1B[0;37m" x "\x1B[0m"
+#define GRAY(x)         "\x1B[1;30m" x "\x1B[0m"
 
 
 #define LOG_ERR(x, ...)    Log::i()->message(ILogBackend::ERR,     x, ##__VA_ARGS__)
@@ -95,4 +102,4 @@ private:
 #   define LOG_DEBUG_WARN(x, ...)
 #endif
 
-#endif /* __LOG_H__ */
+#endif /* XMRIG_LOG_H */
